@@ -1,0 +1,13 @@
+I wrote this tool to set the fan speed on my NAS, based on the ASRock C2750D4I motherboard.
+
+The information about the ipmitool format came from this forum post:
+
+https://lime-technology.com/forum/index.php?topic=39238.msg372263#msg372263
+
+I used perl as I wanted the script to run with no dependencies on FreeNAS.
+
+Simple usage:
+
+fanctrl set FRNT_FAN1=100 FRNT_FAN2=100
+
+Improvements welcome
