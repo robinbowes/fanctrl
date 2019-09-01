@@ -29,7 +29,7 @@ Where I<name> is the name of a fan (use list to see available fans)
 
 Examples:
 
-    fanctrl set front1=60 front2=70
+    fanctrl set REAR_FAN1=60 REAR_FAN2=70
 
 =head1 AUTHOR
 
@@ -56,19 +56,21 @@ package main;
 # GG - ?
 # HH - ?
 
-my %valid_fan_names = (
+use strict;
+use warnings;
+
+my @valid_fan_names;
+
+my %fan_name_index = (
   'CPU_FAN1' => 0,
   'CPU_FAN2' => 1,
-  'REAR_FAN2' => 2,
+  'REAR_FAN1' => 2,
   'REAR_FAN2' => 3,
   'FRNT_FAN1' => 4,
   'FRNT_FAN2' => 5,
 );
 
 my $IPMITOOLCMD = 'ipmitool';
-
-use strict;
-use warnings;
 
 use Getopt::Long qw(:config auto_help);
 use Pod::Usage;
@@ -87,6 +89,8 @@ sub main {
   GetOptions () or pod2usage(1);
   pod2usage(1) unless @ARGV;
 
+  @valid_fan_names = get_valid_fans();
+
   # the first arg is the command
   my $command = shift @ARGV;
 
@@ -100,8 +104,12 @@ sub main {
 # get the values of the specified fans
 # if no args specified, get all values
 sub get {
-  # not sure how to do this
-  exit 0;
+  pod2usage(1) unless validate_get_args(@_);
+  foreach my $param (@_) {
+    my $command = "$IPMITOOLCMD sensor get $param | awk '/Reading/ {print \$4}' 2>/dev/null";
+    my $output = qx($command);
+    print $output;
+  }
 }
 
 # list all fans found in the chassis
@@ -109,15 +117,19 @@ sub get {
 sub list {
   # Dump the keys defined in this script
   pod2usage(1) if @_;
-  print join( ',', sort keys %valid_fan_names), "\n";
+  print join( ',', @valid_fan_names) . "\n";
 }
 
 # set the values of the specified fans
 # expects at least one ARG
 # ARGS in format Name=value
 sub set {
-  pod2usage(1) unless my $validated_args = validate_set_args(@_);
-  set_fan_values($validated_args);
+  pod2usage(1) unless validate_set_args(@_);
+  set_fan_values(@_);
+}
+
+sub validate_get_args {
+  return 1;
 }
 
 sub validate_set_args {
@@ -129,23 +141,62 @@ sub validate_set_args {
 
   # validate all items passed in
   foreach my $item (@_) {
+    my $index = 0;
     my ($name, $value) = split(/=/, $item);
 
     # the name must be valid
-    return unless grep{$_ eq $name} keys(%valid_fan_names);
+    return 0 unless grep{$_ eq $name} @valid_fan_names;
 
     # The value should be between 0-100
-    return unless grep{/^$value$/} (0..100);
-
-    # set the array value corresponding to the fan name to the hex equivalent of the decimal value
-    $validated_args[$valid_fan_names{$name}] = sprintf("0x%x", $value); 
+    return 0 unless grep{/^$value$/} (0..100);
+    $index++;
   }
-  return \@validated_args;
+  return 1
 }
 
 sub set_fan_values {
-  my $hex_values = shift;
+  # initialise array with 8 hex values
+  my @hex_values = (('0x00')x8);
+  foreach my $item (@_) {
+    my ($name, $value) = split(/=/, $item);
+    $hex_values[$fan_name_index{$name}] = sprintf("0x%x", $value);
+  }
   my @command_args = ($IPMITOOLCMD, 'raw', '0x3a', '0x01');
-  push @command_args, @$hex_values;
+  push @command_args, @hex_values;
   system @command_args;
+}
+
+sub get_valid_fans {
+  my @sensors = qx(ipmitool sensor list | awk '/FAN/ {print \$1}' 2>/dev/null);
+  #print(@sensors);
+
+  my @valid_fan_names = ();
+
+  foreach (@sensors) {
+    chomp;
+    my $get_command = "ipmitool sensor get $_ | grep 'Status\\s*:\\s*ok' 2>/dev/null";
+    #print("$get_command\n");
+    my @output = qx($get_command);
+    if ($? == -1) {
+      print "failed to execute: $!\n";
+    }
+    elsif ($? & 127) {
+      printf "child died with signal %d, %s coredump\n",
+            ($? & 127),  ($? & 128) ? 'with' : 'without';
+    }
+    else {
+      my $exit_code = $? >> 8;
+      unless ($exit_code == 0 or $exit_code ==1) {
+        printf "child exited with value %d\n", $? >> 8;
+      }
+    }
+    chomp(@output);
+    #print("{@output} - " . scalar(@output) . "\n");
+    if (scalar @output == 1) {
+      #print("$_\n");
+      push(@valid_fan_names, $_);
+      #print("Fan names: " . join(",", @valid_fan_names), "\n");
+    }
+  }
+  return @valid_fan_names
 }
